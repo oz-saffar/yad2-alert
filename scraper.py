@@ -19,28 +19,72 @@ SEARCH_URL = (
     "https://www.yad2.co.il/realestate/rent/south"
     "?property=3%2C5%2C6%2C39%2C32%2C55&area=52&city=0166"
 )
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+BROWSER_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
     ),
+    "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
+API_HEADERS = {
+    "User-Agent": USER_AGENT,
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.yad2.co.il/realestate/rent",
+    "Origin": "https://www.yad2.co.il",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
 }
 
 ITEM_BUCKETS = ("platinum", "private", "agency")
 
 
+def _make_session():
+    session = requests.Session()
+    # Warm up cookies by hitting the public search page first. The Yad2 WAF
+    # (Reblaze, sets __uzm* cookies) returns HTML challenge pages to bare API
+    # requests from cloud IPs, but accepts requests once the session has the
+    # tokens it issues from a regular page load.
+    session.get(SEARCH_URL, headers=BROWSER_HEADERS, timeout=30)
+    return session
+
+
 def fetch_listings():
     items = []
     page = 1
+    session = _make_session()
     while True:
         params = {**YAD2_PARAMS, "page": str(page)}
-        resp = requests.get(YAD2_API, params=params, headers=HEADERS, timeout=30)
+        resp = session.get(YAD2_API, params=params, headers=API_HEADERS, timeout=30)
         resp.raise_for_status()
-        data = resp.json().get("data", {})
+        try:
+            payload = resp.json()
+        except ValueError:
+            snippet = resp.text[:200].replace("\n", " ")
+            raise RuntimeError(
+                f"Non-JSON response from Yad2 (status {resp.status_code}): {snippet}"
+            )
+        data = payload.get("data", {})
         for bucket in ITEM_BUCKETS:
             bucket_items = data.get(bucket) or []
             if isinstance(bucket_items, list):
